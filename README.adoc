@@ -1,0 +1,139 @@
+# CMake using dependency management
+Using the dependency management will let you pull dependencies in your CMake project.
+
+:toc:
+:sectnums:
+
+== Introduction
+In this article, we'll see that using CMake will let you use dependency management system as a third-party library such as
+
+. CPM
+
+CPM stands for **C**Make **P**ackage **M**anager that is a tools that somebody write that is a wrapper of the `FetchContent` command to get the dependencies, and to make the command easy to use.
+
+== How to use dependency management
+One of the dependency management system that is used by CMake is `CPM`, this one is easier to use than `FetchContent`, that means we can do less things to get the dependency in our project, for example
+
+```cmake
+include(CPM)
+
+# Bring the Catch2 testing library
+CPMAddPackage("gh:catchorg/Catch2#v3.4.0")
+
+# Bring in the fmt library
+CPMAddPackage("gh:fmtlib/fmt#10.1.1")
+
+# Bring in the SFML library
+option(BUILD_SHARED_LIB "Build Shared libraries" OFF)
+CPMAddPackage("gh:SFML/SFML#2.6.1")
+
+add_subdirectory(src)
+
+add_executable(rooster main.cpp)
+target_link_libraries(rooster PRIVATE run_app)
+
+add_executable(gui gui.cpp)
+target_link_libraries(gui PRIVATE sfml-graphics)
+
+add_executable(use_fmt use_fmt.cpp)
+target_link_libraries(use_fmt PRIVATE fmt)
+```
+
+=== CPM usage
+The difference between `FetchContent` and `CPM` is that there is no need to specify a lot of things, as long as `CPM` can retrieve your dependencies
+
+=== Difference between CPM and FetchContent
+CPM is a wrapper for CMake's FetchContent module and adds a number of features that ruen it into a useful dependency manager. The most notable features are:
+
+* A simple to use API
+* Version checking: CPM will check the version number of any added dependency and emit a warning if another dependency requires a more recent version.
+* Offline builds: CPM will override CMake's download and update commands, which allows new builds to be configured while offline if all dependencies are available locally
+* Automatic: shallow clone: if a version tag (e.g. v2.2.0) is provided and `CPM_SOURCE_CACHE` is used, CPM will perform a shallow clone of the dependency, which should be significantly faster while using less storage than a full clone.
+* Overridable: all `CPMAddPackage` can be configured to use `find_package` by setting a CMake flag, making it easy to integrate into projects that may require local versioning through the system's package manager.
+* Package lock files for easier transitive dependency management
+* Dependencies can be overridden per-build using CMake CLI parameters.
+
+ExternalProject works similarly as FetchContent does, however waits with assign dependencies until build time. This has a quite a few disadvantages especially as it makes using custom toolchains / cross-compiling very difficult and can lead to problems with nested depdndencies.
+
+=== Using CPM
+In large projects with many transitive depenencies, it can be useful to introduce a package lock file. This will list all CPM dependencies and can be used to update dependencies without modifying the original `CMakeLists.txt`. To use a package lock add the following command directly after including the `CPM`:
+```cmake
+include(CPM)
+CPMUsePackageLock(package-lock.cmake)
+
+...
+```
+If you want to create or update the package lock file, build the `cpm-update-package-lock` target:
+```sh
+$ cmake -B build
+$ cmake --build build --target cmake-update-package-lock
+```
+
+== Package lock
+The package lock makes it easier to manage and override transitive dependencies. When using a package lock file, dependencies can be update without modifying the main or other project's `CMakeLists.txt`. However, Package lock fil can also be added to the version control to keep the same dependencies across machines.
+
+=== Usage
+After including `CPM`, call `CPMUsePackageLock(package-lock.cmake)` to include `package-lock.cmake`, if it exits. This file can be created and updated using the target `cpm-update-package-lock`.
+
+NOTE: That version changes inside the `CMakeLists` are not registered after declaring packages through a package lock. To update a dependency, change according version in the `package-lock.cmake` file. Any transitive dependencies will need to be updated there as well and `CPM.cmake` will emit a warning if a newer version is required.
+
+=== Example
+The following lines should be added before declaring dependencies in the main `CMakeLists.txt`
+```cmake
+include(cmake/CPM.cmake)
+CPMUsePackageLock(package-lock.cmake)
+```
+In order to generate and update the package lock file, run the `cpm-update-package-lock` target:
+```cmake
+cmake -H . -B build
+cmake --build build --target cpm-update-package-lock
+```
+All CPM.cmake dependencies will now be managed inside the package lock file. Once declared, packages can be added without needing to define version or source info, e.g. using the `CPMGetPackage(<dependency_name>)` command.
+
+== Preparing a project with CPM
+COL differs from converntional package managers as it supports adding any type of project from any source without any modifications to the original code base. However, this means that all information required to download and configure the project must be provided by project users. To make this as convenient as possible, please see the following guidelines:
+
+. Use `CMake` to build your project.
+. Structure your project
+. Use modern CMake features like targets and properties
+. Understand semantic versioning
+. Tag your releases with the version prefixed by a `v`.
+. Use the same version for the installed target for compatibility between local and global installations.
+. Don't include tests or other projects from the main `CMakeLists`.
+. Add your libraries dependencies using `CPMAddPackage` (for deterministic builds) or `CPMFindPackage` (will use global installs, if available).
+. Scope any options your root `CMakeLists.txt` depends on (e.g. `BUILD_TESTING` => `MY_LIBRARY_BUILD_TESTING`
+
+=== How to structure your project
+The following information is biased. But in a good way, I think I'm going to tell you how to structure the directories in your project. This is based on convention, but will help you:
+
+* Easily read other projects following the same patterns,
+* Avoid a pattern that causes conflicts,
+* Keep from muddling and complicating your build.
+
+First, this is what your files should look like when you start if your project is creatively called `project`, with a libraries called `lib`, and an executable called `app`:
+
+:imagesdir-old: {imagesdir}
+:imagesdir: ./assets/images
+image::cmake_project_structure.PNG[structure]
+
+The names are absolute; you'll see contention about `test/` vs `tests/`, and the application folder may be called something else (or not even exits for a library-only project). You'll also sometimes see a `python` folder for python bindings, or a `cmake` folder for helper CMake files, like `Find<library>.cmake` files. But the basics are there.
+
+NOTE: A few things already apparent; the `CMakeLists.txt` files are split up over all source directories, and are not in the include directories. This is because you should be able to copy the contents of the include directory to `/usr/include` or similar directly (except for configuration headers,and not have any extra files or cause any conflicts. That's also why there is a directory for your project inside the include directory. Use `add_subdirectory` in order to add subdirectory containing a `CMakeLists.txt`
+
+Often, you want a `cmake` folder, with all of your helper modules. This is where your `Find*.cmake` files go. An set of some common helpers are at https://github.com/CLIUtils/cmake[CLI CMake utils]. To add this folder to your cmake path run:
+```cmake
+set(CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake" ${CMAKE_MODULE_PATH})
+```
+NOTE: Your extern folder should contains git submodules almost exclusively. That way, you can control the version of the dependencies explicitly, but still upgrade easily. Check how to add a submodule to your project.
+
+NOTE: You should have something like `/build*` in your `.gitignore`, so that users can make build directories in the source directory and use those to build. A few packages prohibit this, but it's much better than doing a true out-of-source build and having to type something different for each package you build.
+
+If you want to avoid the build directory being in a valid source directory, add this near the top of your CMakeLists:
+
+```cmake
+## Require out-of-source builds
+file(TO_MAKE_PATH "${PROJECT_BINARY_DIR}/CMakeLists.txt" LOC_PATH)
+if (EXISTS "${LOC_PATH}")
+    message(FATAL_ERROR "You cannot build in a source directory (or any directory that contains a CMakeLists.txt")
+endif()
+```
